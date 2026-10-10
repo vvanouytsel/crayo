@@ -4,7 +4,7 @@ plugins {
 }
 
 // Changed automatically by the release process; do not edit by hand.
-val appVersion = "1.0.0" // x-release-please-version
+val appVersion = "1.1.0" // x-release-please-version
 // 1.2.3 becomes 10203, so every new release counts as newer to Android.
 val appVersionCode = appVersion.split(".").map { it.toInt() }.let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
 
