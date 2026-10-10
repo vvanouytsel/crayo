@@ -48,4 +48,4 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - Other types (`docs`, `chore`, `ci`, `refactor`, `test`, `build`, `perf`, `style`) do not make a release by themselves.
 - After the first clone, switch on the local check once: `git config core.hooksPath .githooks`. GitHub also checks every push.
 - On every push to `main`, a bot keeps a pull request called "chore(main): release x.y.z" up to date with the new version and changelog. Merging it creates the tag, the GitHub release, and `CHANGELOG.md`.
-- The signed app (`crayo.apk`) is built and attached automatically when the repository has two secrets: `CRAYO_KEYSTORE_BASE64` (the key file as text) and `CRAYO_KEYSTORE_PASSWORD`. Without them, build it with `./gradlew assembleRelease` and attach it with `gh release upload vX.Y.Z crayo.apk`.
+- The signed app (`crayo.apk`) is built and attached to every release automatically. This needs two repository secrets: `CRAYO_KEYSTORE_BASE64` (the key file as base64 text) and `CRAYO_KEYSTORE_PASSWORD`. To rebuild the app for an existing release, run the Release workflow by hand and give it the tag.
