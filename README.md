@@ -7,6 +7,7 @@ An Android app for finding coloring pages and printing them. Type a word (Englis
 - **Search:** `data/Translate.kt` turns Dutch words into English (built-in word list, then a free online translator). `data/Sources.kt` asks the coloring websites at the same time, and every page found is sent to the screen right away.
 - **Checking:** `data/ImageCheck.kt` looks at each picture and checks that it is a coloring page: mostly white paper, no photo colors, and big enough. It is forgiving on purpose. Pictures that fail are hidden behind "Show more" instead of being thrown away.
 - **Printing:** `PrintPages.kt` sends one A4 page per drawing to Android's print screen. Wide drawings are turned sideways to fill the page.
+- **History:** `data/HistoryStore.kt` remembers every printed page on the phone (the exact picture that was printed), so it can be printed again later without internet.
 - **Screen:** `MainActivity.kt` (Jetpack Compose) works on phones and tablets.
 
 ## Websites used
