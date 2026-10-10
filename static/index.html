@@ -88,39 +88,60 @@ let results = [], showWeak = false;
 
 $("form").onsubmit = e => { e.preventDefault(); search(); };
 
+let current = null, searching = false, terms = "";
+
 async function search() {
   const q = $("q").value.trim();
   if (!q) return;
+  if (current) current.abort();
+  current = new AbortController();
   selected.clear(); updateBar();
-  $("grid").innerHTML = ""; showWeak = false;
-  $("status").textContent = "Searching…";
+  results = []; showWeak = false; terms = ""; searching = true;
+  $("grid").innerHTML = "";
+  status();
   try {
-    const r = await fetch("/api/search?q=" + encodeURIComponent(q));
-    const data = await r.json();
-    results = data.results;
-    const terms = [...new Set(data.terms)].join(" / ");
-    window.lastTerms = terms;
-    render();
+    const r = await fetch("/api/search?q=" + encodeURIComponent(q), { signal: current.signal });
+    const reader = r.body.getReader(), decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n"); buffer = lines.pop();
+      let added = false;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const msg = JSON.parse(line);
+        if (msg.type === "terms") terms = [...new Set(msg.terms)].join(" / ");
+        else if (msg.type === "item") { results.push(msg); if (msg.looks_ok || showWeak) $("grid").appendChild(card(msg)); added = true; }
+        else if (msg.type === "done") searching = false;
+      }
+      status();
+    }
   } catch (e) {
+    if (e.name === "AbortError") return;
     $("status").textContent = "Something went wrong. Is Crayo still running?";
+  }
+  searching = false; status();
+}
+
+function status() {
+  const good = results.filter(r => r.looks_ok).length, weak = results.length - good;
+  const st = $("status");
+  if (!searching && results.length === 0) { st.textContent = `No coloring pages found for "${terms}". Try another word.`; return; }
+  st.textContent = searching ? `Searching… ${good} found so far. ` : `${good} coloring pages for "${terms}". `;
+  if (weak && !searching) {
+    const b = document.createElement("button");
+    b.textContent = showWeak ? "Hide the rest" : `Show ${weak} more that may not print well`;
+    b.onclick = () => { showWeak = !showWeak; render(); };
+    st.appendChild(b);
   }
 }
 
 function render() {
-  const good = results.filter(r => r.looks_ok), weak = results.filter(r => !r.looks_ok);
-  const list = showWeak ? results : good;
   $("grid").innerHTML = "";
-  list.forEach(r => $("grid").appendChild(card(r)));
-  const st = $("status");
-  st.textContent = results.length === 0
-    ? `No drawings found for "${window.lastTerms}". Try another word.`
-    : `${good.length} coloring pages for "${window.lastTerms}". `;
-  if (weak.length) {
-    const b = document.createElement("button");
-    b.textContent = showWeak ? "Hide the rest" : `Show ${weak.length} more that may not print well`;
-    b.onclick = () => { showWeak = !showWeak; render(); };
-    st.appendChild(b);
-  }
+  results.filter(r => showWeak || r.looks_ok).forEach(r => $("grid").appendChild(card(r)));
+  status();
 }
 
 function card(r) {
