@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Changed automatically by the release process; do not edit by hand.
+val appVersion = "1.0.0" // x-release-please-version
+// 1.2.3 becomes 10203, so every new release counts as newer to Android.
+val appVersionCode = appVersion.split(".").map { it.toInt() }.let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
+
 android {
     namespace = "app.crayo"
     compileSdk = 37
@@ -11,8 +16,8 @@ android {
         applicationId = "app.crayo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
     }
 
     // The signing key lives outside the project (see the README); without it a release build stays unsigned.

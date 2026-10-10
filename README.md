@@ -38,3 +38,13 @@ crayoKeystorePassword=<its password>
 ```
 
 Download `crayo.apk` from the latest release on GitHub, open it on the phone, and allow installing from that source once.
+
+## Commits and releases
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org): `type(scope): description`, for example `feat: add print history` or `fix: stop crash when a site is down`.
+
+- `feat:` raises the minor version (1.1.0 → 1.2.0), `fix:` raises the patch version (1.1.0 → 1.1.1), and a `!` after the type (or a `BREAKING CHANGE:` line) raises the major version.
+- Other types (`docs`, `chore`, `ci`, `refactor`, `test`, `build`, `perf`, `style`) do not make a release by themselves.
+- After the first clone, switch on the local check once: `git config core.hooksPath .githooks`. GitHub also checks every push.
+- On every push to `main`, a bot keeps a pull request called "chore(main): release x.y.z" up to date with the new version and changelog. Merging it creates the tag, the GitHub release, and `CHANGELOG.md`.
+- The signed app (`crayo.apk`) is built and attached automatically when the repository has two secrets: `CRAYO_KEYSTORE_BASE64` (the key file as text) and `CRAYO_KEYSTORE_PASSWORD`. Without them, build it with `./gradlew assembleRelease` and attach it with `gh release upload vX.Y.Z crayo.apk`.

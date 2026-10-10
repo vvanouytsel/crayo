@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "last-release-sha": "df689e520cecb7e3441c4f7b6ee016485ea23b4f",
+  "packages": {
+    ".": {
+      "package-name": "crayo",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["app/build.gradle.kts"]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Turn on with: git config core.hooksPath .githooks
+exec "$(dirname "$0")/../scripts/check-subject.sh" "$(head -n 1 "$1")"
