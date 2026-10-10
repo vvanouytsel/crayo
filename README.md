@@ -26,3 +26,14 @@ You need Java 21 and the Android SDK (platform 37). Point `local.properties` at 
 ```
 
 The app is created at `app/build/outputs/apk/debug/app-debug.apk`.
+
+## Release build and installing on a phone
+
+The signed app is built with `./gradlew assembleRelease`. The signing key is **not** in this repository: keep a backup of it somewhere safe, because without it installed apps cannot be updated. The build looks for two Gradle properties (put them in `~/.gradle/gradle.properties`):
+
+```
+crayoKeystore=<path to the .jks file>
+crayoKeystorePassword=<its password>
+```
+
+Download `crayo.apk` from the latest release on GitHub, open it on the phone, and allow installing from that source once.

@@ -15,9 +15,24 @@ android {
         versionName = "1.0"
     }
 
+    // The signing key lives outside the project (see the README); without it a release build stays unsigned.
+    signingConfigs {
+        create("release") {
+            val keystorePath = providers.gradleProperty("crayoKeystore").orNull
+            if (keystorePath != null) {
+                val password = providers.gradleProperty("crayoKeystorePassword").get()
+                storeFile = file(keystorePath)
+                storePassword = password
+                keyAlias = "crayo"
+                keyPassword = password
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
