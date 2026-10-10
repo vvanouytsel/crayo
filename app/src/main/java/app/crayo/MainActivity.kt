@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -64,6 +67,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.crayo.data.ExampleMode
 import app.crayo.data.HistoryItem
 import app.crayo.data.Result
 import coil3.compose.AsyncImage
@@ -72,11 +76,11 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-private val Red = Color(0xFFE8523F)
-private val Paper = Color(0xFFFFFDF8)
-private val Line = Color(0xFFE3E0D8)
-private val Ink = Color(0xFF222222)
-private val Muted = Color(0xFF6B6B6B)
+internal val Red = Color(0xFFE8523F)
+internal val Paper = Color(0xFFFFFDF8)
+internal val Line = Color(0xFFE3E0D8)
+internal val Ink = Color(0xFF222222)
+internal val Muted = Color(0xFF6B6B6B)
 
 private val quickWords = listOf("dragon", "unicorn", "dinosaur", "princess", "car", "fire truck", "cat", "dog", "horse", "butterfly", "robot", "space")
 
@@ -95,13 +99,35 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun CrayoApp(vm: SearchViewModel = viewModel()) {
     val activity = LocalContext.current as Activity
-    BackHandler(enabled = vm.screen == Screen.History) { vm.show(Screen.Search) }
+    BackHandler(enabled = vm.screen != Screen.Search) { vm.back() }
     Scaffold(
         containerColor = Paper,
-        bottomBar = { if (vm.selected.isNotEmpty()) PrintBar(vm, activity) },
+        bottomBar = { if (vm.selected.isNotEmpty() && vm.screen != Screen.Settings) PrintBar(vm, activity) },
     ) { padding ->
         val modifier = Modifier.padding(padding)
-        if (vm.screen == Screen.History) HistoryScreen(vm, modifier) else SearchScreen(vm, modifier)
+        when (vm.screen) {
+            Screen.Search -> SearchScreen(vm, modifier)
+            Screen.History -> HistoryScreen(vm, modifier)
+            Screen.Settings -> SettingsScreen(vm, modifier)
+        }
+    }
+
+    when (val notice = vm.notice) {
+        null -> Unit
+        Notice.MissingKey -> AlertDialog(
+            onDismissRequest = { vm.notice = null },
+            title = { Text("Add your OpenAI key") },
+            text = { Text("Color examples need an OpenAI key. Add it in Settings, or print without the example.") },
+            confirmButton = { TextButton(onClick = { vm.notice = null; vm.show(Screen.Settings) }) { Text("Open settings", color = Red) } },
+            dismissButton = { TextButton(onClick = { vm.notice = null; vm.print(activity, withExamples = false) }) { Text("Print without") } },
+        )
+        is Notice.ExampleFailed -> AlertDialog(
+            onDismissRequest = { vm.notice = null },
+            title = { Text("The example could not be made") },
+            text = { Text(notice.reason) },
+            confirmButton = { TextButton(onClick = { vm.notice = null; vm.print(activity, withExamples = false) }) { Text("Print without", color = Red) } },
+            dismissButton = { TextButton(onClick = { vm.notice = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -127,6 +153,9 @@ private fun SearchScreen(vm: SearchViewModel, modifier: Modifier) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { focus.clearFocus(); vm.show(Screen.History) }) {
                         Text(if (vm.history.isEmpty()) "History" else "History (${vm.history.size})", color = Red, fontWeight = FontWeight.SemiBold)
+                    }
+                    TextButton(onClick = { focus.clearFocus(); vm.show(Screen.Settings) }) {
+                        Text("Settings", color = Red, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Logo()
@@ -204,8 +233,14 @@ private fun Status(vm: SearchViewModel, good: Int, weak: Int) {
         good + weak == 0 -> "No coloring pages found for \"${vm.terms}\". Try another word."
         else -> "$good coloring pages for \"${vm.terms}\"."
     }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 8.dp).height(52.dp)) {
-        Text(text, color = Muted, textAlign = TextAlign.Center, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 8.dp).heightIn(min = 52.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(top = 6.dp),
+        ) {
+            if (vm.searching) CircularProgressIndicator(Modifier.size(18.dp), color = Red, strokeWidth = 2.5.dp)
+            Text(text, color = Muted, textAlign = TextAlign.Center, fontSize = 14.sp)
+        }
         if (weak > 0 && !vm.searching) {
             TextButton(onClick = { vm.showWeak = !vm.showWeak }) {
                 Text(if (vm.showWeak) "Hide the rest" else "Show $weak more that may not print well", color = Red)
@@ -230,7 +265,7 @@ private fun HistoryScreen(vm: SearchViewModel, modifier: Modifier) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { vm.show(Screen.Search) }) { Text("‹ Back", color = Red, fontWeight = FontWeight.SemiBold) }
+                    TextButton(onClick = { vm.back() }) { Text("‹ Back", color = Red, fontWeight = FontWeight.SemiBold) }
                     Spacer(Modifier.weight(1f))
                     if (vm.history.isNotEmpty()) TextButton(onClick = { confirmClear = true }) { Text("Clear all", color = Muted) }
                 }
@@ -323,11 +358,15 @@ private fun PrintBar(vm: SearchViewModel, activity: Activity) {
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Ink),
             ) {
+                val examples = vm.exampleMode != ExampleMode.Off
+                if (vm.printStatus != null) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.5.dp)
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
-                    when {
-                        vm.preparingPrint -> "Getting full size…"
-                        count == 1 -> "Print page"
-                        else -> "Print $count pages"
+                    vm.printStatus ?: when {
+                        count == 1 -> if (examples) "Print page with example" else "Print page"
+                        else -> if (examples) "Print $count pages with examples" else "Print $count pages"
                     },
                     fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
