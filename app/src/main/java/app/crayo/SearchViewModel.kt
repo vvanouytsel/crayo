@@ -12,6 +12,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.crayo.color.ColorError
 import app.crayo.color.ColorExample
+import app.crayo.color.ColorPlay
+import app.crayo.color.ColorStep
 import app.crayo.color.OpenAi
 import app.crayo.data.ExampleMode
 import app.crayo.data.HistoryItem
@@ -39,6 +41,20 @@ sealed interface Notice {
     data class ExampleFailed(val reason: String) : Notice
 }
 
+/** What printing is doing right now, for the progress panel. */
+class PrintProgress(
+    val stage: Stage,
+    val page: Int = 1,                 // which page, counting from 1
+    val pages: Int = 1,
+    val title: String = "",
+    val areas: Int = 0,                // numbered areas found on this page
+    val picture: Bitmap? = null,       // the numbered page the model is looking at
+    val play: ColorPlay? = null,       // a page that colors itself in for show, while the model thinks
+    val withExamples: Boolean = false,
+) {
+    enum class Stage { Downloading, Splitting, Asking, Reusing, Painting, Sending }
+}
+
 /** A page ready to print, and where it came from. */
 private class Page(val id: String, val title: String, val source: String, val bitmap: Bitmap)
 
@@ -54,7 +70,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     var searching by mutableStateOf(false)
     var searched by mutableStateOf(false)
     var showWeak by mutableStateOf(false)
-    var printStatus by mutableStateOf<String?>(null)   // what the print button says while it is busy
+    var progress by mutableStateOf<PrintProgress?>(null)   // set while printing is busy
     var notice by mutableStateOf<Notice?>(null)
     val results = mutableStateListOf<Result>()
     val history = mutableStateListOf<HistoryItem>()   // newest first
@@ -86,7 +102,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     private var modelsJob: Job? = null
     private var modelsRequest = 0
 
-    fun choose(mode: ExampleMode) { exampleMode = mode; settings.exampleMode = mode; refreshModels() }
+    fun choose(mode: ExampleMode) { exampleMode = mode; settings.exampleMode = mode }
     fun choose(value: InkLevel) { ink = value; settings.ink = value }
     fun changeKey(value: String) { openAiKey = value.trim(); settings.openAiKey = value; refreshModels(waitMs = 700) }
     fun changeModel(value: String) { model = value; settings.model = value; describeModels() }
@@ -96,7 +112,6 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshModels(waitMs: Long = 0) {
         modelsJob?.cancel()
         val request = ++modelsRequest
-        if (exampleMode == ExampleMode.Off) return
         if (openAiKey.isBlank()) {
             models.clear(); loadingModels = false
             modelsNote = "Add your key to choose from your account's models."
@@ -165,35 +180,55 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun wasPrinted(id: String) = history.any { it.id == id }
 
-    /** Prints the ticked pages. With examples switched on, each page is colored first. */
-    fun print(activity: Activity, withExamples: Boolean = exampleMode != ExampleMode.Off) {
-        if (printStatus != null || selected.isEmpty()) return
+    private var printJob: Job? = null
+
+    /** Prints the ticked pages. With an example mode other than Off, each page is colored first. */
+    fun print(activity: Activity, mode: ExampleMode = exampleMode) {
+        if (progress != null || selected.isEmpty()) return
+        val withExamples = mode != ExampleMode.Off
         if (withExamples && openAiKey.isBlank()) {
             notice = Notice.MissingKey
             return
         }
         val ids = selected.toList()
-        viewModelScope.launch {
-            printStatus = "Getting full size…"
+        printJob = viewModelScope.launch {
+            progress = PrintProgress(PrintProgress.Stage.Downloading, pages = ids.size, withExamples = withExamples)
             try {
                 val pages = coroutineScope { ids.map { id -> async { loadPage(id) } }.awaitAll().filterNotNull() }
                 if (pages.isEmpty()) return@launch
                 val examples = HashMap<String, Bitmap>()
                 if (withExamples) {
                     pages.forEachIndexed { index, page ->
-                        printStatus = if (pages.size == 1) "Coloring the example…" else "Coloring example ${index + 1} of ${pages.size}…"
-                        examples[page.id] = colorExample.make(page.id, page.title, page.bitmap, server.ifBlank { OpenAi.DEFAULT_SERVER }, openAiKey, model.ifBlank { OpenAi.DEFAULT_MODEL }, ink.wash)
+                        fun show(stage: PrintProgress.Stage, areas: Int = 0, picture: Bitmap? = null, play: ColorPlay? = null) {
+                            progress = PrintProgress(stage, index + 1, pages.size, page.title, areas, picture, play, withExamples = true)
+                        }
+                        show(PrintProgress.Stage.Splitting)
+                        examples[page.id] = colorExample.make(
+                            page.id, page.title, page.bitmap, server.ifBlank { OpenAi.DEFAULT_SERVER }, openAiKey,
+                            model.ifBlank { OpenAi.DEFAULT_MODEL }, ink.wash,
+                        ) { step ->
+                            when (step) {
+                                ColorStep.Splitting -> show(PrintProgress.Stage.Splitting)
+                                is ColorStep.Asking -> show(PrintProgress.Stage.Asking, step.areas, step.picture, step.play)
+                                is ColorStep.Reusing -> show(PrintProgress.Stage.Reusing, step.areas)
+                                ColorStep.Painting -> show(PrintProgress.Stage.Painting, progress?.areas ?: 0, progress?.picture)
+                            }
+                        }
                     }
                 }
+                progress = PrintProgress(PrintProgress.Stage.Sending, pages = pages.size, withExamples = withExamples)
                 recordPrinted(pages)
-                PrintPages.print(activity, pages.map { Sheet(it.bitmap, examples[it.id], exampleMode == ExampleMode.Small) })
+                PrintPages.print(activity, pages.map { Sheet(it.bitmap, examples[it.id], mode == ExampleMode.Small) })
             } catch (e: ColorError) {
                 notice = Notice.ExampleFailed(e.message ?: "The example could not be made.")
             } finally {
-                printStatus = null
+                progress = null
             }
         }
     }
+
+    /** Stops a print that is still getting pages or waiting for colors. */
+    fun cancelPrint() { printJob?.cancel() }
 
     /** The picture to print: the saved copy from the history if there is one, otherwise a fresh download. */
     private suspend fun loadPage(id: String): Page? {

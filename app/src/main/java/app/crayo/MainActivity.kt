@@ -6,7 +6,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +31,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -36,6 +44,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -44,8 +53,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,6 +66,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
+import android.graphics.Bitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
@@ -71,6 +85,10 @@ import app.crayo.data.ExampleMode
 import app.crayo.data.HistoryItem
 import app.crayo.data.Result
 import coil3.compose.AsyncImage
+import kotlin.math.exp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -119,13 +137,13 @@ private fun CrayoApp(vm: SearchViewModel = viewModel()) {
             title = { Text("Add your OpenAI key") },
             text = { Text("Color examples need an OpenAI key. Add it in Settings, or print without the example.") },
             confirmButton = { TextButton(onClick = { vm.notice = null; vm.show(Screen.Settings) }) { Text("Open settings", color = Red) } },
-            dismissButton = { TextButton(onClick = { vm.notice = null; vm.print(activity, withExamples = false) }) { Text("Print without") } },
+            dismissButton = { TextButton(onClick = { vm.notice = null; vm.print(activity, ExampleMode.Off) }) { Text("Print without") } },
         )
         is Notice.ExampleFailed -> AlertDialog(
             onDismissRequest = { vm.notice = null },
             title = { Text("The example could not be made") },
             text = { Text(notice.reason) },
-            confirmButton = { TextButton(onClick = { vm.notice = null; vm.print(activity, withExamples = false) }) { Text("Print without", color = Red) } },
+            confirmButton = { TextButton(onClick = { vm.notice = null; vm.print(activity, ExampleMode.Off) }) { Text("Print without", color = Red) } },
             dismissButton = { TextButton(onClick = { vm.notice = null }) { Text("Cancel") } },
         )
     }
@@ -347,30 +365,152 @@ private fun PageCard(
 private fun PrintBar(vm: SearchViewModel, activity: Activity) {
     val count = vm.selected.size
     Surface(color = Color.White, shadowElevation = 8.dp) {
-        Row(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = { vm.clearSelection() }) { Text("Clear", color = Muted) }
-            Button(
-                onClick = { vm.print(activity) },
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Ink),
-            ) {
-                val examples = vm.exampleMode != ExampleMode.Off
-                if (vm.printStatus != null) {
-                    CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.5.dp)
-                    Spacer(Modifier.width(4.dp))
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            val progress = vm.progress
+            if (progress != null) {
+                ProgressPanel(progress, onCancel = { vm.cancelPrint() })
+            } else {
+                Text("Colored example", fontSize = 12.sp, color = Muted, modifier = Modifier.padding(bottom = 4.dp))
+                Choice(ExampleMode.entries, vm.exampleMode, { it.label }) { vm.choose(it) }
+                Row(
+                    Modifier.padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { vm.clearSelection() }) { Text("Clear", color = Muted) }
+                    Button(
+                        onClick = { vm.print(activity) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Ink),
+                    ) {
+                        val examples = vm.exampleMode != ExampleMode.Off
+                        Text(
+                            when {
+                                count == 1 -> if (examples) "Print page with example" else "Print page"
+                                else -> if (examples) "Print $count pages with examples" else "Print $count pages"
+                            },
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
                 }
-                Text(
-                    vm.printStatus ?: when {
-                        count == 1 -> if (examples) "Print page with example" else "Print page"
-                        else -> if (examples) "Print $count pages with examples" else "Print $count pages"
-                    },
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                )
             }
         }
+    }
+}
+
+private val stageSteps = listOf(
+    PrintProgress.Stage.Downloading, PrintProgress.Stage.Splitting, PrintProgress.Stage.Asking,
+    PrintProgress.Stage.Painting, PrintProgress.Stage.Sending,
+)
+
+/** Shows what printing is doing: each step, the page the AI is looking at, and a clock that proves it is still working. */
+@Composable
+private fun ProgressPanel(progress: PrintProgress, onCancel: () -> Unit) {
+    val seconds = remember { mutableLongStateOf(0) }
+    LaunchedEffect(progress.stage, progress.page) {
+        seconds.longValue = 0
+        while (true) { delay(1000); seconds.longValue++ }
+    }
+    val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
+        initialValue = 0.35f, targetValue = 1f, label = "pulse",
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+    )
+
+    // The wait for the model has no known length, so the bar creeps towards the end of that step and never stops moving.
+    val inPage = when (progress.stage) {
+        PrintProgress.Stage.Downloading -> 0f
+        PrintProgress.Stage.Splitting -> 0.05f
+        PrintProgress.Stage.Asking -> 0.12f + 0.73f * (1f - exp(-seconds.longValue / 18f))
+        PrintProgress.Stage.Reusing -> 0.8f
+        PrintProgress.Stage.Painting -> 0.9f
+        PrintProgress.Stage.Sending -> 1f
+    }
+    val done = when (progress.stage) {
+        PrintProgress.Stage.Downloading -> 0f
+        PrintProgress.Stage.Sending -> 1f
+        else -> ((progress.page - 1) + inPage) / progress.pages
+    }
+    val fraction by animateFloatAsState(done.coerceIn(0f, 1f), label = "fraction")
+
+    Column(Modifier.fillMaxWidth().widthIn(max = 560.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val picture = animatedPicture(progress)
+            if (picture != null) {
+                Image(
+                    picture.asImageBitmap(), contentDescription = "The page being colored",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)).background(Paper),
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                if (progress.title.isNotEmpty()) {
+                    val where = if (progress.pages > 1) "Page ${progress.page} of ${progress.pages} · " else ""
+                    Text(where + progress.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                val steps = if (progress.withExamples) stageSteps else listOf(PrintProgress.Stage.Downloading, PrintProgress.Stage.Sending)
+                val current = steps.indexOf(if (progress.stage == PrintProgress.Stage.Reusing) PrintProgress.Stage.Asking else progress.stage)
+                steps.forEachIndexed { index, step ->
+                    StepRow(
+                        text = stepText(step, progress, seconds.longValue),
+                        state = when { index < current -> 1; index == current -> 2; else -> 0 },
+                        pulse = pulse,
+                    )
+                }
+            }
+        }
+        LinearProgressIndicator(
+            progress = { fraction }, color = Red, trackColor = Line,
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        )
+        TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel", color = Muted) }
+    }
+}
+
+/** While the model thinks, a page that quietly colors itself in. */
+@Composable
+private fun animatedPicture(progress: PrintProgress): Bitmap? {
+    val play = progress.play.takeIf { progress.stage == PrintProgress.Stage.Asking }
+    var frame by remember(play) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(play) {
+        if (play == null) return@LaunchedEffect
+        var tick = 0
+        while (true) {
+            frame = withContext(Dispatchers.Default) { play.frame(tick++) }
+            delay(125)
+        }
+    }
+    return if (play != null) frame else progress.picture
+}
+
+private fun stepText(step: PrintProgress.Stage, progress: PrintProgress, seconds: Long): String = when (step) {
+    PrintProgress.Stage.Downloading -> if (progress.pages == 1) "Getting the full-size page" else "Getting ${progress.pages} full-size pages"
+    PrintProgress.Stage.Splitting -> "Finding the areas to color"
+    PrintProgress.Stage.Asking -> when (progress.stage) {
+        PrintProgress.Stage.Reusing -> "Colors remembered from last time, no cost"
+        PrintProgress.Stage.Asking -> "AI picking colors for ${progress.areas} areas · ${seconds}s"
+        else -> "AI picked the colors"
+    }
+    PrintProgress.Stage.Painting -> "Painting the example"
+    PrintProgress.Stage.Sending -> "Sending to the printer"
+    PrintProgress.Stage.Reusing -> ""
+}
+
+/** [state]: 0 waiting, 1 done, 2 busy right now. */
+@Composable
+private fun StepRow(text: String, state: Int, pulse: Float) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 1.dp)) {
+        Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
+            when (state) {
+                1 -> Text("✓", color = Color(0xFF4FAE5A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                2 -> Box(Modifier.size(9.dp).alpha(pulse).clip(CircleShape).background(Red))
+                else -> Box(Modifier.size(7.dp).clip(CircleShape).background(Line))
+            }
+        }
+        Text(
+            text, fontSize = 13.sp,
+            color = if (state == 0) Muted else Ink,
+            fontWeight = if (state == 2) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
     }
 }

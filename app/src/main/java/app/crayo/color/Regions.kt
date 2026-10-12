@@ -26,6 +26,7 @@ class Regions(
         private const val MAX_NUMBERS = 90
         private const val TINY = 25           // regions smaller than this never get a number
         private const val FAR = 1 shl 28
+        private const val REACH = 30         // distance units (3 per pixel): how roomy paper must be to count as the page margin
 
         fun pair(a: Int, b: Int): Long = if (a < b) (a.toLong() shl 32) or b.toLong() else (b.toLong() shl 32) or a.toLong()
 
@@ -35,34 +36,6 @@ class Regions(
             // Lines, made a little thicker so small gaps close and colors cannot leak out.
             var closed = BooleanArray(n) { gray[it] < LINE }
             repeat(2) { closed = grow(closed, w, h) }
-
-            // Give every enclosed white area its own id.
-            val label = IntArray(n)
-            val stack = IntArray(n)
-            var count = 0
-            for (start in 0 until n) {
-                if (closed[start] || label[start] != 0) continue
-                count++
-                var top = 0
-                stack[top++] = start
-                label[start] = count
-                while (top > 0) {
-                    val p = stack[--top]
-                    val x = p % w
-                    if (x > 0 && !closed[p - 1] && label[p - 1] == 0) { label[p - 1] = count; stack[top++] = p - 1 }
-                    if (x < w - 1 && !closed[p + 1] && label[p + 1] == 0) { label[p + 1] = count; stack[top++] = p + 1 }
-                    if (p >= w && !closed[p - w] && label[p - w] == 0) { label[p - w] = count; stack[top++] = p - w }
-                    if (p < n - w && !closed[p + w] && label[p + w] == 0) { label[p + w] = count; stack[top++] = p + w }
-                }
-            }
-            val area = IntArray(count + 1)
-            for (l in label) area[l]++
-
-            // The empty paper around the drawing: big areas that touch the edge of the page.
-            val outside = BooleanArray(count + 1)
-            fun edge(i: Int) { val l = label[i]; if (l != 0 && area[l] > n / 100) outside[l] = true }
-            for (x in 0 until w) { edge(x); edge(n - w + x) }
-            for (y in 0 until h) { edge(y * w); edge(y * w + w - 1) }
 
             // How far every pixel is from the nearest line (to find room for the numbers).
             val dist = IntArray(n) { if (closed[it]) 0 else FAR }
@@ -90,6 +63,35 @@ class Regions(
                 }
                 dist[i] = d
             }
+
+            // Give every enclosed white area its own id.
+            val label = IntArray(n)
+            val stack = IntArray(n)
+            var count = 0
+            for (start in 0 until n) {
+                if (closed[start] || label[start] != 0) continue
+                count++
+                var top = 0
+                stack[top++] = start
+                label[start] = count
+                while (top > 0) {
+                    val p = stack[--top]
+                    val x = p % w
+                    if (x > 0 && !closed[p - 1] && label[p - 1] == 0) { label[p - 1] = count; stack[top++] = p - 1 }
+                    if (x < w - 1 && !closed[p + 1] && label[p + 1] == 0) { label[p + 1] = count; stack[top++] = p + 1 }
+                    if (p >= w && !closed[p - w] && label[p - w] == 0) { label[p - w] = count; stack[top++] = p - w }
+                    if (p < n - w && !closed[p + w] && label[p + w] == 0) { label[p + w] = count; stack[top++] = p + w }
+                }
+            }
+            count = unleak(label, dist, w, h, count)
+            val area = IntArray(count + 1)
+            for (l in label) area[l]++
+
+            // The empty paper around the drawing: big areas that touch the edge of the page.
+            val outside = BooleanArray(count + 1)
+            fun edge(i: Int) { val l = label[i]; if (l != 0 && area[l] > n / 100) outside[l] = true }
+            for (x in 0 until w) { edge(x); edge(n - w + x) }
+            for (y in 0 until h) { edge(y * w); edge(y * w + w - 1) }
 
             // Which regions sit next to each other, across a line.
             val touching = HashMap<Long, Int>()
@@ -156,6 +158,87 @@ class Regions(
             }
 
             return Regions(w, h, gray, label, nearest, count, numberOf, numbers, spotX, spotY, spotRoom, outside, touching)
+        }
+
+        /**
+         * A frame with a gap in it (a watermark sitting on the border, say) lets the picture's own background join the
+         * empty paper around it, and that background would then be left white. The paper that really is outside has room
+         * to spare along the page edge; a leak is only a thin neck. So keep the roomy paper reachable from the page edge
+         * as the outside, and give any big piece cut off from it a region of its own.
+         * Returns the new number of regions.
+         */
+        private fun unleak(label: IntArray, dist: IntArray, w: Int, h: Int, count: Int): Int {
+            val n = w * h
+            val area = IntArray(count + 1)
+            for (l in label) area[l]++
+            val candidates = HashSet<Int>()
+            fun edge(i: Int) { val l = label[i]; if (l != 0 && area[l] > n / 100) candidates.add(l) }
+            for (x in 0 until w) { edge(x); edge(n - w + x) }
+            for (y in 0 until h) { edge(y * w); edge(y * w + w - 1) }
+
+            var regions = count
+            val state = ByteArray(n)              // 0 not looked at, 1 outside paper, 2 part of a piece being measured
+            var current = IntArray(n)
+            var next = IntArray(n)
+            for (l in candidates) {
+                var size = 0
+                fun keep(i: Int) { if (label[i] == l && state[i] == 0.toByte() && dist[i] > REACH) { state[i] = 1; current[size++] = i } }
+                for (x in 0 until w) { keep(x); keep(n - w + x) }
+                for (y in 0 until h) { keep(y * w); keep(y * w + w - 1) }
+                if (size == 0) continue
+
+                // Roomy paper connected to the page edge.
+                var reached = 0
+                while (reached < size) {
+                    val p = current[reached++]
+                    val x = p % w
+                    if (x > 0) keep(p - 1)
+                    if (x < w - 1) keep(p + 1)
+                    if (p >= w) keep(p - w)
+                    if (p < n - w) keep(p + w)
+                }
+                // Grow it back out to the lines, so the margin keeps its full width.
+                var front = size
+                var layer = current.copyOf(front)
+                repeat(REACH / 3 + 3) {
+                    var found = 0
+                    for (k in 0 until front) {
+                        val p = layer[k]
+                        val x = p % w
+                        fun take(q: Int) { if (label[q] == l && state[q] == 0.toByte()) { state[q] = 1; next[found++] = q } }
+                        if (x > 0) take(p - 1)
+                        if (x < w - 1) take(p + 1)
+                        if (p >= w) take(p - w)
+                        if (p < n - w) take(p + w)
+                    }
+                    layer = next.copyOf(found)
+                    front = found
+                }
+
+                // What is left of this region is cut off from the page edge. Big pieces become regions of their own.
+                val piece = current
+                for (start in 0 until n) {
+                    if (label[start] != l || state[start] != 0.toByte()) continue
+                    var count2 = 0
+                    state[start] = 2; piece[count2++] = start
+                    var head = 0
+                    while (head < count2) {
+                        val p = piece[head++]
+                        val x = p % w
+                        fun add(q: Int) { if (label[q] == l && state[q] == 0.toByte()) { state[q] = 2; piece[count2++] = q } }
+                        if (x > 0) add(p - 1)
+                        if (x < w - 1) add(p + 1)
+                        if (p >= w) add(p - w)
+                        if (p < n - w) add(p + w)
+                    }
+                    if (count2 >= n * 3 / 100) {
+                        regions++
+                        for (k in 0 until count2) label[piece[k]] = regions
+                    }
+                }
+                current = IntArray(n); next = IntArray(n)
+            }
+            return regions
         }
 
         private fun grow(mask: BooleanArray, w: Int, h: Int): BooleanArray {
