@@ -48,7 +48,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.crayo.color.OpenAi
-import app.crayo.data.ExampleMode
 import app.crayo.data.InkLevel
 
 @Composable
@@ -60,49 +59,42 @@ internal fun SettingsScreen(vm: SearchViewModel, modifier: Modifier) {
         Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
 
         Column(Modifier.padding(horizontal = 12.dp).widthIn(max = 560.dp)) {
-            Setting("Color example", "Print a colored version with each page.")
-            Choice(ExampleMode.entries, vm.exampleMode, { it.label }) { vm.choose(it) }
-            Hint(
-                when (vm.exampleMode) {
-                    ExampleMode.Off -> "Only the coloring page is printed."
-                    ExampleMode.Small -> "A small example on the same sheet."
-                    ExampleMode.Page -> "The example gets its own sheet."
-                }
+            Text(
+                "Color examples are chosen each time you print. These settings are used whenever you print one.",
+                fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 8.dp),
             )
 
-            if (vm.exampleMode != ExampleMode.Off) {
-                Setting("OpenAI key", "Stays on this phone. Each example costs a little on your OpenAI account.")
+            Setting("OpenAI key", "Stays on this phone. Each example costs a little on your OpenAI account.")
+            OutlinedTextField(
+                value = vm.openAiKey,
+                onValueChange = { vm.changeKey(it) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                placeholder = { Text("sk-…", color = Muted) },
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show", color = Red) } },
+            )
+
+            Setting("Model", "The OpenAI model that picks the colors.")
+            ModelPicker(vm)
+
+            if (BuildConfig.DEBUG) {
+                Setting("Server", "Test builds only.")
                 OutlinedTextField(
-                    value = vm.openAiKey,
-                    onValueChange = { vm.changeKey(it) },
+                    value = vm.server,
+                    onValueChange = { vm.changeServer(it) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    placeholder = { Text("sk-…", color = Muted) },
-                    visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide" else "Show", color = Red) } },
                 )
-
-                Setting("Model", "The OpenAI model that picks the colors.")
-                ModelPicker(vm)
-
-                if (BuildConfig.DEBUG) {
-                    Setting("Server", "Test builds only.")
-                    OutlinedTextField(
-                        value = vm.server,
-                        onValueChange = { vm.changeServer(it) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                    )
-                }
-
-                Setting("Ink", "Lighter colors use less ink.")
-                Choice(InkLevel.entries, vm.ink, { it.label }) { vm.choose(it) }
-                Spacer(Modifier.height(10.dp))
-                InkSample(vm.ink.wash)
             }
+
+            Setting("Ink", "Lighter colors use less ink.")
+            Choice(InkLevel.entries, vm.ink, { it.label }) { vm.choose(it) }
+            Spacer(Modifier.height(10.dp))
+            InkSample(vm.ink.wash)
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -148,7 +140,7 @@ private fun Hint(text: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun <T> Choice(options: List<T>, current: T, label: (T) -> String, onPick: (T) -> Unit) {
+internal fun <T> Choice(options: List<T>, current: T, label: (T) -> String, onPick: (T) -> Unit) {
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         options.forEachIndexed { index, option ->
             SegmentedButton(

@@ -28,38 +28,48 @@ object OpenAi {
         .callTimeout(200, TimeUnit.SECONDS)
         .build()
 
-    private fun prompt(title: String, numbers: Int) = """
+    /** Where a numbered area is on the page, in whole percent, so the model can find it even if a printed number is hard to read. */
+    class Area(val number: Int, val x: Int, val y: Int, val share: Int)
+
+    /** The model's first answer: what the page shows, and for every number which part it is and its color (0xRRGGBB). */
+    class Answer(val subject: String, val parts: Map<Int, String>, val colors: Map<Int, Int>)
+
+    private fun prompt(title: String, areas: List<Area>) = """
         The first picture is a children's coloring page. Its title is "$title".
-        The second picture is the same page with its areas tinted and numbered 1 to $numbers.
+        The second picture is the same page with its areas tinted and numbered 1 to ${areas.size}.
         The tints are only there to show which pixels belong to each number; they are not the real colors.
 
-        Decide what the page shows, then give every number the color that area should have in a correctly colored version.
+        Where each number sits (percent across from the left, percent down from the top, and how much of the page it covers).
+        Use this list to be sure you have the right area, even when a printed number is small or hard to read:
+        ${areas.joinToString("\n        ") { "${it.number}: ${it.x}% across, ${it.y}% down, ${it.share}% of the page" }}
+
+        Work in this order:
+        1. Decide what the page shows.
+        2. For every number, name the part it is in a few words (for example "left wing", "sky", "belly"), then choose its color.
+        3. Make the colors agree. Both eyes match, both wings match, all petals of one flower match, the sky is a sky color, and the ground is a ground color.
+        4. Look again at the biggest areas. They set the mood of the page, so make sure none of them was left white by mistake.
         - If it is a known character, flag, logo, vehicle or animal, use its real, recognisable colors.
         - Skin, hair, clothes, eyes and so on get their natural colors. One number can cover several small pieces of the same thing, such as strands of hair.
         - Use clear, cheerful, fairly saturated colors a child would use. Avoid grey unless the thing really is grey.
-        - Use #FFFFFF for areas that should stay white, including plain empty background.
+        - Everything inside the picture is part of the scene and gets a realistic color: ground, grass, sand, floor, sky, water, walls, mountains, rocks. None of these is ever white.
+        - Use #FFFFFF only for things that really are white (clouds, snow, white fur, teeth, highlights), and for empty paper around the drawing.
+        - Neighbouring areas of different things should get clearly different colors.
 
-        Answer with JSON only, in this shape, with an entry for every number from 1 to $numbers:
-        {"subject": "what the page shows", "colors": {"1": "#RRGGBB", "2": "#RRGGBB"}}
+        Answer with JSON only, in this shape, with an entry for every number from 1 to ${areas.size}:
+        {"subject": "what the page shows", "areas": {"1": {"part": "sky", "color": "#RRGGBB"}, "2": {"part": "dragon body", "color": "#RRGGBB"}}}
     """.trimIndent()
 
-    /** Returns number -> color (0xRRGGBB). Both pictures are JPEG bytes already encoded as base64. */
-    suspend fun colors(server: String, key: String, model: String, title: String, numbers: Int, pageJpeg: String, numberedJpeg: String): Map<Int, Int> {
-        fun picture(data: String) = JSONObject().put("type", "image_url")
-            .put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$data").put("detail", "high"))
+    private fun picture(data: String) = JSONObject().put("type", "image_url")
+        .put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$data").put("detail", "high"))
+
+    /** Sends one question made of text and pictures, and returns the JSON object the model answered with. */
+    private suspend fun ask(server: String, key: String, model: String, text: String, pictures: List<String>): JSONObject {
+        val content = JSONArray().put(JSONObject().put("type", "text").put("text", text))
+        pictures.forEach { content.put(picture(it)) }
         val body = JSONObject()
             .put("model", model)
             .put("response_format", JSONObject().put("type", "json_object"))
-            .put(
-                "messages",
-                JSONArray().put(
-                    JSONObject().put("role", "user").put(
-                        "content",
-                        JSONArray().put(JSONObject().put("type", "text").put("text", prompt(title, numbers)))
-                            .put(picture(pageJpeg)).put(picture(numberedJpeg)),
-                    )
-                ),
-            )
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", content)))
         val request = try {
             Request.Builder().url(server).header("Authorization", "Bearer $key")
                 .post(body.toString().toRequestBody("application/json".toMediaType())).build()
@@ -67,19 +77,40 @@ object OpenAi {
             throw ColorError("The server address in Settings is not valid.")
         }
 
-        val (code, text) = send(request)
-        if (code !in 200..299) throw ColorError(explain(code, text))
+        val (code, response) = send(request)
+        if (code !in 200..299) throw ColorError(explain(code, response))
         return try {
-            val answer = JSONObject(text).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-            val colors = JSONObject(answer.substring(answer.indexOf('{'))).getJSONObject("colors")
-            val result = HashMap<Int, Int>()
-            for (name in colors.keys()) {
+            val answer = JSONObject(response).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
+            JSONObject(answer.substring(answer.indexOf('{')))
+        } catch (e: Exception) {
+            throw ColorError("The model's answer could not be read. Try again, or try another model.")
+        }
+    }
+
+    private fun hex(value: String): Int? {
+        val digits = value.trim().removePrefix("#")
+        return if (digits.length == 6) digits.toIntOrNull(16) else null
+    }
+
+    /** First pass. Both pictures are JPEG bytes already encoded as base64. */
+    suspend fun colors(server: String, key: String, model: String, title: String, areas: List<Area>, pageJpeg: String, numberedJpeg: String): Answer {
+        val answer = ask(server, key, model, prompt(title, areas), listOf(pageJpeg, numberedJpeg))
+        try {
+            val list = answer.getJSONObject("areas")
+            val colors = HashMap<Int, Int>()
+            val parts = HashMap<Int, String>()
+            for (name in list.keys()) {
                 val number = name.trim().toIntOrNull() ?: continue
-                val hex = colors.getString(name).trim().removePrefix("#")
-                if (hex.length == 6) hex.toIntOrNull(16)?.let { result[number] = it }
+                val entry = list.get(name)
+                if (entry is JSONObject) {
+                    entry.optString("part").takeIf { it.isNotBlank() }?.let { parts[number] = it }
+                    hex(entry.optString("color"))?.let { colors[number] = it }
+                } else if (entry is String) {
+                    hex(entry)?.let { colors[number] = it }
+                }
             }
-            if (result.isEmpty()) throw ColorError("The model answered, but gave no usable colors.")
-            result
+            if (colors.isEmpty()) throw ColorError("The model answered, but gave no usable colors.")
+            return Answer(answer.optString("subject", title), parts, colors)
         } catch (e: ColorError) {
             throw e
         } catch (e: Exception) {

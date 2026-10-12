@@ -11,8 +11,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Whether a colored example is printed with each coloring page. Off unless the user turns it on. */
-enum class ExampleMode(val label: String) { Off("Off"), Small("Small"), Page("Page") }
+/** Whether a colored example is printed with the coloring pages. Chosen on every print, starting at the last choice. */
+enum class ExampleMode(val label: String) { Off("None"), Small("Small"), Page("Own page") }
 
 /** How strong the example's colors are. Lighter colors use less ink. */
 enum class InkLevel(val label: String, val wash: Float) { Full("Full", 0f), Soft("Soft", 0.45f), Light("Light", 0.70f) }
