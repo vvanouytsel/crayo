@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/vvanouytsel/crayo/compare/v1.2.0...v1.3.0) (2026-10-12)
+
+
+### Features
+
+* choose the color example per print and show live progress ([#3](https://github.com/vvanouytsel/crayo/issues/3)) ([65928dd](https://github.com/vvanouytsel/crayo/commit/65928dd488b35ec4c863addfa551a39e9655cfe4))
+
 ## [1.2.0](https://github.com/vvanouytsel/crayo/compare/v1.1.0...v1.2.0) (2026-10-10)
 
 
